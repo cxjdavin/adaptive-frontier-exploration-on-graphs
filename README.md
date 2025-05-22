@@ -1,2 +1,3 @@
-# afeg
-Accompanying repository for "Adaptive Frontier Exploration on Graphs with Applications to Network-Based Disease Testing"
+Some packages that may need to be installed:
+
+pip install ipython matplotlib scipy numpy tqdm pandas torch torch-geometric networkx
