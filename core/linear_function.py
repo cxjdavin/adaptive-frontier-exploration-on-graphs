@@ -12,5 +12,5 @@ class LinearFunction:
     def __call__(self, x: float) -> float:
         return self.a * x + self.b
     
-    def derivative(self) -> float:
+    def derivative(self) -> "LinearFunction":
         return LinearFunction(0.0, self.a)

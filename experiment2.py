@@ -31,18 +31,20 @@ def create_all_experiment_trees(all_n: list, num_graphs: int, rng_seed: int) -> 
             G.add_nodes_from(np.arange(n))
             G.add_edges_from((int(nodes[i]), int(nodes[graph_rng.integers(0, i)])) for nodes in [graph_rng.permutation(n).tolist()] for i in range(1, n))
             assert nx.is_tree(G)
-            print(f"n = {G.number_of_nodes()}, m = {G.number_of_edges()}, diam(G) = {max(nx.diameter(G.subgraph(cc_nodes)) for cc_nodes in nx.connected_components(G))}")
+            # print(f"n = {G.number_of_nodes()}, m = {G.number_of_edges()}, diam(G) = {max(nx.diameter(G.subgraph(cc_nodes)) for cc_nodes in nx.connected_components(G))}")
 
             # Save graph
             save_pickle(G, get_tree_pickle_filename(n, inst_idx))
 
 def run_experiment2(n: int, beta: float, policy_indices: list, all_edges_to_add: list, experiment_result_pickle_filename: str):
     multithread = True
-    train_policies = True
     covariate_length = 5
     num_graphs = 10
     num_monte_carlo_runs = 200
     rng_seed = 42
+    eval_rng_seed = 42
+    eps = 0
+    eps_rng_seed = 42
 
     # Create all experiment trees
     create_all_experiment_trees(all_n, num_graphs, rng_seed)
@@ -88,16 +90,18 @@ def run_experiment2(n: int, beta: float, policy_indices: list, all_edges_to_add:
             inst_configs['theta_pairwise'] = inst_rng.normal(size=AbstractJointProbabilityClass.compute_theta_length(covariate_length, 2))
             inst_configs['discount_factor'] = beta
             inst_configs['num_monte_carlo_runs'] = num_monte_carlo_runs
-            inst_configs['instance_hash'] = f"exp2_{n}_{inst_idx}_{edges_to_add}_{beta}_{num_monte_carlo_runs}_{rng_seed}"
+            inst_configs['instance_hash'] = f"exp2_{n}_{inst_idx}_{edges_to_add}_{beta}_{num_monte_carlo_runs}_{rng_seed}_{eps}_{eps_rng_seed}"
             inst_configs['exp_name'] = "exp2"
             inst_configs['inst_idx'] = pair_idx
             inst_configs['n'] = n
-            inst_configs['eval_rng_seed'] = 42
+            inst_configs['eval_rng_seed'] = eval_rng_seed
+            inst_configs['eps'] = eps
+            inst_configs['eps_rng_seed'] = eps_rng_seed
             all_inst_configs.append(inst_configs)
 
     # Compute results
     print(f"========== Solving n = {n}, beta = {beta} ==========")
-    _, all_mean_vec, all_std_vec, all_disc_mean_vec, all_disc_std_vec, _, _ = run_experiment(all_inst_configs, policy_indices, multithread, train_policies)
+    _, all_mean_vec, all_std_vec, all_disc_mean_vec, all_disc_std_vec, _, _ = run_experiment(all_inst_configs, policy_indices, multithread)
 
     # Process and store results
     for policy_idx in policy_indices:
@@ -128,8 +132,8 @@ def plot(n: int, beta: float, policy_indices: list, all_edges_to_add: list, expe
     X = np.arange(1, n+1)
     for ax_idx in range(len(all_edges_to_add)):
         edges_to_add = all_edges_to_add[ax_idx]
-        axes[ax_idx].set_xlim(min(X), max(X))
-        axes[ax_idx].set_xticks(np.round(np.linspace(min(X), max(X), 8)))
+        axes[ax_idx].set_xlim(np.min(X), np.max(X))
+        axes[ax_idx].set_xticks(np.round(np.linspace(np.min(X), np.max(X), 8)))
         for policy_idx in policy_indices:
             dict_key = (policy_idx, n, beta, edges_to_add)
             mean_for_policy = exp_rollout_disc_means[dict_key]
@@ -165,7 +169,6 @@ if __name__ == "__main__":
     just_plot = bool(int(sys.argv[1]))
     n = int(sys.argv[2])
     beta = float(sys.argv[3])
-    print(just_plot, n, beta)
 
     # policies are ["Random", "Greedy", "DQNPolicy", "Gittins", "Optimal"]
     all_n = [n]

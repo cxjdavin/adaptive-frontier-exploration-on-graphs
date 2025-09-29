@@ -8,11 +8,11 @@ import numpy as np
 from tqdm.notebook import tqdm
 
 # Local imports
-from core.abstract_joint_probability_class import AbstractJointProbabilityClass
-from core.binary_env import BinaryEnv
+from policies.abstract_policy_class import AbstractPolicyClass
+from core.binary_frontier_environment import BinaryFrontierEnv
 
 class PolicyEvaluator:
-    def __init__(self, env: BinaryEnv) -> None:
+    def __init__(self, env: BinaryFrontierEnv) -> None:
         self.env = copy.deepcopy(env)
         self.n = self.env.n
 
@@ -51,7 +51,7 @@ class PolicyEvaluator:
     Compute reward of policy on given ground truth state
     Returns an array of accumulated (discounted) rewards until all nodes are tested
     """
-    def evaluate_ground_truth(self, policy: AbstractJointProbabilityClass, ground_truth: np.ndarray, discount_factor: float) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_ground_truth(self, policy: AbstractPolicyClass, ground_truth: tuple, discount_factor: float) -> tuple[np.ndarray, np.ndarray, float]:
         start_time = timeit.default_timer()
         rewards = []
         discounted_rewards = []
@@ -68,7 +68,7 @@ class PolicyEvaluator:
         elapsed_time = end_time - start_time
         return rewards, discounted_rewards, elapsed_time
 
-    def exact_evaluation(self, policy: AbstractJointProbabilityClass) -> tuple[np.ndarray, np.ndarray]:
+    def exact_evaluation(self, policy: AbstractPolicyClass) -> tuple[np.ndarray, np.ndarray, float]:
         rewards = []
         discounted_rewards = []
         elapsed_times = []
@@ -89,7 +89,7 @@ class PolicyEvaluator:
         assert np.isclose(total_prob, 1.0)
         expected_rewards = np.sum(rewards, axis=0)
         expected_discounted_rewards = np.sum(discounted_rewards, axis=0)
-        average_time = np.mean(elapsed_times)
+        average_time = float(np.mean(elapsed_times))
         assert len(expected_rewards) == self.n
         assert len(expected_discounted_rewards) == self.n
         return expected_rewards, expected_discounted_rewards, average_time

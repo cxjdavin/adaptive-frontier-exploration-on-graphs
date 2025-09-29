@@ -22,6 +22,41 @@ class PiecewiseLinearFunction:
         self.changepoints = changepoints
         self.value_functions = value_functions
 
+    # Remove empty pieces and merge consecutie intervals with same function
+    def clean(self):
+        cleaned_changepoints = []
+        cleaned_value_functions = []
+        current_piece_b = 0
+        current_linear_function = None
+        for i in range(len(self.value_functions)):
+            a = self.changepoints[i-1] if i > 0 else 0
+            b = self.changepoints[i]
+            if a == b:
+                # Ignore zero length piece
+                continue
+            else:
+                if current_linear_function is None:
+                    current_piece_b = b
+                    current_linear_function = self.value_functions[i]
+                elif (current_linear_function.a == self.value_functions[i].a
+                      and current_linear_function.b == self.value_functions[i].b):
+                    # Extend interval of current piece
+                    current_piece_b = b
+                else:
+                    # Close previous piece
+                    cleaned_changepoints.append(current_piece_b)
+                    cleaned_value_functions.append(current_linear_function)
+
+                    # Start new piece
+                    current_piece_b = b
+                    current_linear_function = self.value_functions[i]
+
+        # Close last piece
+        cleaned_changepoints.append(current_piece_b)
+        cleaned_value_functions.append(current_linear_function)
+        self.changepoints = cleaned_changepoints
+        self.value_functions = cleaned_value_functions
+
     def __repr__(self):
         parts = []
         for i in range(len(self.value_functions)):

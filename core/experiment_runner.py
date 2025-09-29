@@ -1,16 +1,18 @@
 # Standard library imports
+import copy
 import os
-import timeit
 
 from multiprocessing import Pool
 
 # Third-party imports
 import numpy as np
+
 from tqdm import tqdm
 
 # Local imports
-from core.binary_env import BinaryEnv
+from core.binary_frontier_environment import BinaryFrontierEnv
 from core.policy_evaluator import PolicyEvaluator
+from core.realization_distribution import RealizationDistribution
 from core.log_junction_tree import LogJunctionTree
 from core.io_utils import load_pickle, save_pickle
 from policies.random_policy import RandomPolicy
@@ -22,32 +24,30 @@ from policies.optimal_policy import OptimalPolicy
 policies = [RandomPolicy, GreedyPolicy, DQNPolicy, GittinsPolicy, OptimalPolicy]
 policy_labels = ["Random", "Greedy", "DQN", "Gittins", "Optimal"]
 
-def create_one_monte_carlo_sample(args) -> np.ndarray:
+def create_one_monte_carlo_sample(args: tuple) -> np.ndarray:
     nomc_inst_pickle_filename, rng_seed = args
-    _, _, _, G, factor_graph, discount_factor, cc_dict, cc_root = load_pickle(nomc_inst_pickle_filename)
-    env = BinaryEnv(G, factor_graph, discount_factor, cc_dict, cc_root)
-    evaluator = PolicyEvaluator(env)
+    _, _, _, G, P, _, discount_factor, cc_dict, cc_root = load_pickle(nomc_inst_pickle_filename)
+    true_env = BinaryFrontierEnv(G, P, discount_factor, cc_dict, cc_root)
+    evaluator = PolicyEvaluator(true_env)
     return evaluator.generate_monte_carlo_samples(1, rng_seed)
 
-def train_policy_on_instance(args) -> tuple[int, float]:
+def train_policy_on_instance(args: tuple) -> tuple[int, float]:
     inst_pickle_filename, policy_idx = args
-    _, _, instance_hash, G, factor_graph, discount_factor, cc_dict, cc_root = load_pickle(inst_pickle_filename)
-    env = BinaryEnv(G, factor_graph, discount_factor, cc_dict, cc_root)
-    start_time = timeit.default_timer()
-    policies[policy_idx](env, instance_hash, train=True)
-    end_time = timeit.default_timer()
-    elapsed_time = end_time - start_time
-    return policy_idx, elapsed_time
+    _, _, instance_hash, G, _, Q, discount_factor, cc_dict, cc_root = load_pickle(inst_pickle_filename)
+    env = BinaryFrontierEnv(G, Q, discount_factor, cc_dict, cc_root)
+    policy = policies[policy_idx](env, instance_hash)
+    return policy_idx, policy.train_time
 
-def solve_instance(args) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def solve_instance(args: tuple) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, float]:
     inst_pickle_filename, policy_idx, mc_idx, mc_sample = args
     assert policy_idx in [0,1,2,3,4]
-    exp_name, inst_idx, instance_hash, G, factor_graph, discount_factor, cc_dict, cc_root = load_pickle(inst_pickle_filename)
+    exp_name, inst_idx, instance_hash, G, P, Q, discount_factor, cc_dict, cc_root = load_pickle(inst_pickle_filename)
     policy_inst_pickle_filename = f"results/{exp_name}/{policy_labels[policy_idx]}/{mc_idx}_{instance_hash}.pkl"
     if not os.path.isfile(policy_inst_pickle_filename):
-        env = BinaryEnv(G, factor_graph, discount_factor, cc_dict, cc_root)
-        policy = policies[policy_idx](env, instance_hash, train=False)
-        evaluator = PolicyEvaluator(env)
+        env = BinaryFrontierEnv(G, Q, discount_factor, cc_dict, cc_root)
+        policy = policies[policy_idx](env, instance_hash)
+        true_env = BinaryFrontierEnv(G, P, discount_factor, cc_dict, cc_root)
+        evaluator = PolicyEvaluator(true_env)
         if mc_idx is None:
             mean_vec, disc_mean_vec, elapsed_time = evaluator.exact_evaluation(policy)
         else:
@@ -57,13 +57,17 @@ def solve_instance(args) -> tuple[int, np.ndarray, np.ndarray, np.ndarray, np.nd
         mean_vec, disc_mean_vec, elapsed_time = load_pickle(policy_inst_pickle_filename)
     return policy_idx, inst_idx, mean_vec, disc_mean_vec, elapsed_time
 
-def run_experiment(all_inst_configs: list[dict], all_policy_indices: list[int], multithread: bool, train_policies: bool = True) -> tuple[dict, dict, dict, dict, dict, dict, dict]:
+def run_experiment(
+        all_inst_configs: list[dict],
+        all_policy_indices: list[int],
+        multithread: bool
+    ) -> tuple[dict, dict, dict, dict, dict, dict, dict]:
     train_jobs = []
     jobs = []
     for inst_idx in tqdm(range(len(all_inst_configs)), desc=f"Pre-processing instances"):
         inst_configs = all_inst_configs[inst_idx]
         inst_pickle_filename = f"results/{inst_configs['exp_name']}/instances/{inst_configs['instance_hash']}.pkl"
-        inst_mc_pickle_filename = f"results/{inst_configs['exp_name']}/monte_carlo_samples/{inst_configs['instance_hash']}.pkl"
+        inst_mc_pickle_filename = f"results/{inst_configs['exp_name']}/monte_carlo_samples/{inst_configs['instance_hash'].rsplit('_', 2)[0]}.pkl"
 
         # Setup instance for multithreading
         if not os.path.isfile(inst_pickle_filename):
@@ -75,71 +79,107 @@ def run_experiment(all_inst_configs: list[dict], all_policy_indices: list[int], 
                 'theta_pairwise': inst_configs['theta_pairwise']
             }
 
-            # Generate factor graph either using Pgmpy or LogJunctionTree
-            factor_graph = LogJunctionTree([f"X{idx}" for idx in G.nodes()], args)
+            # True distribution P has no noise
+            true_args = copy.deepcopy(args)
+            true_args['eps'] = 0
+            true_args['eps_rng_seed'] = 42
 
-            # Pre-process environment once
-            env = BinaryEnv(G, factor_graph, inst_configs['discount_factor'])
+            # Pre-process environment once to pre-compute roots once
+            preprocess_P = LogJunctionTree([f"X{idx}" for idx in G.nodes()], true_args)
+            preprocess_env = BinaryFrontierEnv(G, preprocess_P, inst_configs['discount_factor'])
+
+            # Use realization from real-world data or use ground truth theta to define P
+            if 'statuses' in inst_configs.keys():
+                # Use realizations from real-world data
+                true_args['realization'] = inst_configs['statuses']
+                P = RealizationDistribution([f"X{idx}" for idx in G.nodes()], true_args)
+            else:
+                # Use ground truth theta
+                P = preprocess_P
+            
+            # Policies use a possibly noisy version Q of the distribution P
+            args['eps'] = inst_configs['eps']
+            args['eps_rng_seed'] = inst_configs['eps_rng_seed']
+            Q = LogJunctionTree([f"X{idx}" for idx in G.nodes()], args)
 
             # Save instance pickle object
-            save_pickle(tuple([inst_configs['exp_name'], inst_idx, inst_configs['instance_hash'], G, factor_graph, inst_configs['discount_factor'], env.cc_dict.copy(), env.cc_root.copy()]), inst_pickle_filename)
+            save_pickle(tuple([
+                inst_configs['exp_name'],
+                inst_idx,
+                inst_configs['instance_hash'],
+                G,
+                P,
+                Q,
+                inst_configs['discount_factor'],
+                preprocess_env.cc_dict,
+                preprocess_env.cc_root
+            ]), inst_pickle_filename)
             
             if inst_configs['n'] <= 12:
                 mc_samples = None
             else:
-                # Pre-generate Monte Carlo samples for all instances
-                rng = np.random.default_rng(inst_configs['eval_rng_seed'])
-                mc_jobs = [(inst_pickle_filename, mc_seed) for mc_seed in rng.integers(0, 1e9, inst_configs['num_monte_carlo_runs'])]
-                mc_samples = []
-                if multithread:
-                    # Multithread version
-                    with Pool() as pool:
-                        for mc_sample in tqdm(pool.imap_unordered(create_one_monte_carlo_sample, mc_jobs), total=len(mc_jobs), desc=f"Generating {inst_configs['num_monte_carlo_runs']} Monte Carlo samples (multithread)", leave=False):
-                            mc_samples.append(mc_sample)
-                else:
-                    # Single thread version
-                    for mc_args in tqdm(mc_jobs, desc=f"Training policies (single thread)"):
-                        mc_samples.append(create_one_monte_carlo_sample(mc_args))
-                mc_samples = np.array(mc_samples)
+                if not os.path.isfile(inst_mc_pickle_filename):
+                    if 'statuses' in inst_configs.keys():
+                        # Only 1 testing sample using the ground truth statuses
+                        mc_samples = np.array([inst_configs['statuses']])
+                    else:
+                        # Pre-generate Monte Carlo samples for all instances
+                        rng = np.random.default_rng(inst_configs['eval_rng_seed'])
+                        mc_jobs = [
+                            (inst_pickle_filename, mc_seed)
+                            for mc_seed in rng.integers(0, int(1e9), inst_configs['num_monte_carlo_runs'])
+                        ]
+                        mc_samples = []
+                        if multithread:
+                            # Multithread version
+                            with Pool() as pool:
+                                for mc_sample in tqdm(
+                                    pool.imap_unordered(create_one_monte_carlo_sample, mc_jobs),
+                                    total=len(mc_jobs),
+                                    desc=f"Generating {inst_configs['num_monte_carlo_runs']} Monte Carlo samples (multithread)",
+                                    leave=False
+                                ):
+                                    mc_samples.append(mc_sample)
+                        else:
+                            # Single thread version
+                            for mc_args in tqdm(mc_jobs, desc=f"Training policies (single thread)"):
+                                mc_samples.append(create_one_monte_carlo_sample(mc_args))
+                        mc_samples = np.array(mc_samples)
 
-            # Save instance pickle object (with MC samples)
-            save_pickle(mc_samples, inst_mc_pickle_filename)
+                    # Save instance pickle object (with MC samples)
+                    save_pickle(mc_samples, inst_mc_pickle_filename)
 
         # Create policy training job
-        if train_policies:
-            for policy_idx in all_policy_indices:
-                train_jobs.append([inst_pickle_filename, policy_idx])
+        for policy_idx in all_policy_indices:
+            train_jobs.append((inst_pickle_filename, policy_idx))
 
         # Create 1 job per (policy, sample)
         if inst_configs['n'] <= 12:
             for policy_idx in all_policy_indices:
-                jobs.append([inst_pickle_filename, policy_idx, None, None])
+                jobs.append((inst_pickle_filename, policy_idx, None, None))
         else:
             mc_samples = load_pickle(inst_mc_pickle_filename)
             for policy_idx in all_policy_indices:
                 for mc_idx in range(len(mc_samples)):
-                    jobs.append([inst_pickle_filename, policy_idx, mc_idx, mc_samples[mc_idx]])
+                    jobs.append((inst_pickle_filename, policy_idx, mc_idx, mc_samples[mc_idx]))
 
-    train_time_pickle_filename = f"results/{inst_configs['exp_name']}/traintime_{inst_configs['instance_hash']}.pkl"
-    if train_policies:
-        # Train all policies once, then instantiate them without training in jobs
-        all_training_time = {policy_idx: [] for policy_idx in all_policy_indices}
-        if multithread:
-            # Multithread version
-            with Pool() as pool:
-                for policy_idx, elapsed_time in tqdm(pool.imap_unordered(train_policy_on_instance, train_jobs), total=len(train_jobs), desc=f"Training policies (multithread)"):
-                    all_training_time[policy_idx].append(elapsed_time)
-        else:
-            # Single thread version
-            for train_job in tqdm(train_jobs, desc=f"Training policies (single thread)"):
-                policy_idx, elapsed_time = train_policy_on_instance(train_job)
-                all_training_time[policy_idx].append(elapsed_time)
-        
-        # Store training time
-        save_pickle(all_training_time, train_time_pickle_filename)
+    
+    # Train all policies once, then instantiate them without training in jobs
+    all_training_time = {policy_idx: [] for policy_idx in all_policy_indices}
+    if multithread:
+        # Multithread version
+        with Pool() as pool:
+            for policy_idx, train_time in tqdm(
+                pool.imap_unordered(train_policy_on_instance, train_jobs),
+                total=len(train_jobs),
+                desc=f"Training policies (multithread)"
+            ):
+                all_training_time[policy_idx].append(train_time)
     else:
-        # Load training time
-        all_training_time = load_pickle(train_time_pickle_filename)
+        # Single thread version
+        for train_job in tqdm(train_jobs, desc=f"Training policies (single thread)"):
+            policy_idx, train_time = train_policy_on_instance(train_job)
+            all_training_time[policy_idx].append(train_time)
 
     # Create dictionary to collect results
     jobs_mean_vec = {policy_idx: dict() for policy_idx in all_policy_indices}
@@ -155,7 +195,11 @@ def run_experiment(all_inst_configs: list[dict], all_policy_indices: list[int], 
     if multithread:
         # Multithread version
         with Pool() as pool:
-            for policy_idx, inst_idx, mean_vec, disc_mean_vec, elapsed_time in tqdm(pool.imap_unordered(solve_instance, jobs), total=len(jobs), desc=f"Solving (multithread)"):
+            for policy_idx, inst_idx, mean_vec, disc_mean_vec, elapsed_time in tqdm(
+                pool.imap_unordered(solve_instance, jobs),
+                total=len(jobs),
+                desc=f"Solving (multithread)"
+            ):
                 jobs_mean_vec[policy_idx][inst_idx].append(mean_vec)
                 jobs_disc_mean_vec[policy_idx][inst_idx].append(disc_mean_vec)
                 jobs_time_vec[policy_idx][inst_idx].append(elapsed_time)

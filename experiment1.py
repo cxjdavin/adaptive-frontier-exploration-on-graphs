@@ -28,18 +28,20 @@ def create_all_experiment_trees(all_n: list, num_graphs: int, rng_seed: int) -> 
             G.add_nodes_from(np.arange(n))
             G.add_edges_from((int(nodes[i]), int(nodes[graph_rng.integers(0, i)])) for nodes in [graph_rng.permutation(n).tolist()] for i in range(1, n))
             assert nx.is_tree(G)
-            print(f"n = {G.number_of_nodes()}, m = {G.number_of_edges()}, diam(G) = {max(nx.diameter(G.subgraph(cc_nodes)) for cc_nodes in nx.connected_components(G))}")
+            # print(f"n = {G.number_of_nodes()}, m = {G.number_of_edges()}, diam(G) = {max(nx.diameter(G.subgraph(cc_nodes)) for cc_nodes in nx.connected_components(G))}")
 
             # Save graph
             save_pickle(G, get_tree_pickle_filename(n, inst_idx))
 
 def run_experiment1(policies_to_run: dict, experiment_result_pickle_filename: str):
     multithread = True
-    train_policies = True
     covariate_length = 5
     num_graphs = 10
     num_monte_carlo_runs = 200
     rng_seed = 42
+    eval_rng_seed = 42
+    eps = 0
+    eps_rng_seed = 42
 
     # Create all experiment trees
     create_all_experiment_trees(all_n, num_graphs, rng_seed)
@@ -62,17 +64,19 @@ def run_experiment1(policies_to_run: dict, experiment_result_pickle_filename: st
             inst_configs['theta_pairwise'] = inst_rng.normal(size=AbstractJointProbabilityClass.compute_theta_length(covariate_length, 2))
             inst_configs['discount_factor'] = beta
             inst_configs['num_monte_carlo_runs'] = num_monte_carlo_runs
-            inst_configs['instance_hash'] = f"exp1_{n}_{inst_idx}_{beta}_{num_monte_carlo_runs}_{rng_seed}"
+            inst_configs['instance_hash'] = f"exp1_{n}_{inst_idx}_{beta}_{num_monte_carlo_runs}_{rng_seed}_{eps}_{eps_rng_seed}"
             inst_configs['exp_name'] = "exp1"
             inst_configs['inst_idx'] = inst_idx
             inst_configs['n'] = n
-            inst_configs['eval_rng_seed'] = 42
+            inst_configs['eval_rng_seed'] = eval_rng_seed
+            inst_configs['eps'] = eps
+            inst_configs['eps_rng_seed'] = eps_rng_seed
             all_inst_configs.append(inst_configs)
 
         # Compute results
         print(f"========== Solving n = {n}, beta = {beta} ==========")
         policy_indices = policies_to_run[key]
-        all_training_time, all_mean_vec, all_std_vec, all_disc_mean_vec, all_disc_std_vec, all_time_mean_vec, all_time_std_vec = run_experiment(all_inst_configs, policy_indices, multithread, train_policies)
+        all_training_time, all_mean_vec, all_std_vec, all_disc_mean_vec, all_disc_std_vec, all_time_mean_vec, all_time_std_vec = run_experiment(all_inst_configs, policy_indices, multithread)
 
         # Process and store results
         exp_training_time[key] = all_training_time
@@ -113,8 +117,8 @@ def plot_row(policies_to_run: dict, policy_labels: list, policy_colors: list, po
         n, beta = key
         policy_indices = policies_to_run[key]
         X = np.arange(1, n+1)
-        axes[ax_idx].set_xlim(min(X), max(X))
-        axes[ax_idx].set_xticks(np.round(np.linspace(min(X), max(X), 8)))
+        axes[ax_idx].set_xlim(np.min(X), np.max(X))
+        axes[ax_idx].set_xticks(np.round(np.linspace(np.min(X), np.max(X), 8)))
         axes[ax_idx].set_title(fr"{n} nodes, $\beta =$ {beta}")
         for i in policy_indices:
             line_handle, = axes[ax_idx].plot(X, exp_rollout_means[key][i][1], ls=policy_styles[i], color=policy_colors[i], lw=3)
@@ -168,8 +172,8 @@ def plot_3x3(policies_to_run: dict, policy_labels: list, policy_colors: list, po
         n, beta = key
         policy_indices = policies_to_run[key]
         X = np.arange(1, n+1)
-        axes[ax_idx].set_xlim(min(X), max(X))
-        axes[ax_idx].set_xticks(np.round(np.linspace(min(X), max(X), 8)))
+        axes[ax_idx].set_xlim(np.min(X), np.max(X))
+        axes[ax_idx].set_xticks(np.round(np.linspace(np.min(X), np.max(X), 8)))
         axes[ax_idx].set_title(fr"{n} nodes, $\beta =$ {beta}")
         for i in policy_indices:
             line_handle, = axes[ax_idx].plot(X, exp_rollout_means[key][i][1], ls=policy_styles[i], color=policy_colors[i], lw=3)
@@ -205,8 +209,8 @@ def plot_3x3(policies_to_run: dict, policy_labels: list, policy_colors: list, po
         n, beta = key
         policy_indices = policies_to_run[key]
         X = np.arange(1, n+1)
-        axes[ax_idx].set_xlim(min(X), max(X))
-        axes[ax_idx].set_xticks(np.round(np.linspace(min(X), max(X), 8)))
+        axes[ax_idx].set_xlim(np.min(X), np.max(X))
+        axes[ax_idx].set_xticks(np.round(np.linspace(np.min(X), np.max(X), 8)))
         axes[ax_idx].set_title(fr"{n} nodes, $\beta =$ {beta}")
         for i in policy_indices:
             line_handle, = axes[ax_idx].plot(X, exp_rollout_means[key][i][0], ls=policy_styles[i], color=policy_colors[i], lw=3)
@@ -249,7 +253,6 @@ def plot(policies_to_run: dict, experiment_result_pickle_filename: str) -> None:
 if __name__ == "__main__":
     print(sys.argv)
     just_plot = bool(int(sys.argv[1]))
-    print(just_plot)
 
     # policies are ["Random", "Greedy", "DQNPolicy", "Gittins", "Optimal"]
     all_n = [10, 50, 100]

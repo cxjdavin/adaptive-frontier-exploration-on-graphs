@@ -2,13 +2,12 @@
 import itertools
 
 # Third-party imports
-import networkx as nx
-from networkx.algorithms.chordal import complete_to_chordal_graph
 import numpy as np
 from scipy.special import logsumexp
 
 # Local imports
 from core.abstract_joint_probability_class import AbstractJointProbabilityClass
+from core.log_factor import LogFactor
 
 class LogJunctionTree(AbstractJointProbabilityClass):
     def __init__(self, variables: list[str], args: dict) -> None:
@@ -26,11 +25,15 @@ class LogJunctionTree(AbstractJointProbabilityClass):
         assert len(theta_unary) == self.compute_theta_length(covariate_length, 1)
         assert len(theta_pairwise) == self.compute_theta_length(covariate_length, 2)
 
-        """
-        domains:         dict var→cardinality
-        unary_factors:   { var: 1D array of size domains[var] }
-        pairwise_factors:{ (u,v): 2D array of shape (dom[u], dom[v]) }
-        """
+        # Noise scale is proportional to the magnitude of each coordinate, i.e., noise is coordinate wise [-eps * |theta|, eps * |theta|]
+        eps = self.args['eps']
+        rng_seed = self.args['eps_rng_seed']
+        rng = np.random.default_rng(rng_seed)
+        theta_unary = self.args['theta_unary'] + eps * (2 * rng.random(len(theta_unary)) - 1) * np.abs(self.args['theta_unary'])
+        theta_pairwise = self.args['theta_pairwise'] + eps * (2 * rng.random(len(theta_pairwise)) - 1) * np.abs(self.args['theta_pairwise'])
+
+        # unary_factors:   { var: 1D array of size domains[var] }
+        # pairwise_factors:{ (u,v): 2D array of shape (dom[u], dom[v]) }
         X = [f"X{i}" for i in range(self.n)]
         self.domains = {v: 2 for v in self.variables}
         self.factors = []
@@ -65,28 +68,30 @@ class LogJunctionTree(AbstractJointProbabilityClass):
         for (u, v) in self.pairwise_factors:
             adj[u].add(v)
             adj[v].add(u)
+            
         # Min-fill heuristic
         elim_order = []
-        adj_copy = {v:set(neis) for v, neis in adj.items()}
+        adj_copy = {v: set(nbrs) for v, nbrs in adj.items()}
         while adj_copy:
-            # pick v minimizing fill-in edges
+            # Pick v minimizing fill-in edges
             def fillin_cost(x):
                 nbrs = adj_copy[x]
                 return sum(1 for a,b in itertools.combinations(nbrs,2) if b not in adj_copy[a])
             v = min(adj_copy, key=lambda x: (fillin_cost(x), len(adj_copy[x])))
             elim_order.append(v)
             nbrs = adj_copy[v]
-            # fill in clique among neighbors
+            
+            # Fill in clique among neighbors
             for a, b in itertools.combinations(nbrs, 2):
                 adj_copy[a].add(b)
                 adj_copy[b].add(a)
-            # remove v
+            
+            # Remove v
             for nbr in nbrs:
                 adj_copy[nbr].remove(v)
             del adj_copy[v]
         self.elim_order = elim_order
         
-    
     def compute_conditional_probability(self, query_dict: dict[str,int], evidence_dict: dict[str,int]) -> float:
         query_vars = list(query_dict.keys())
         query_vals = [query_dict[v] for v in query_vars]
@@ -123,7 +128,7 @@ class LogJunctionTree(AbstractJointProbabilityClass):
             f_prod = related[0]
             for f in related[1:]:
                 f_prod = f_prod.multiply(f, self.domains)
-            f_marg = f_prod.marginalize(v, self.domains)
+            f_marg = f_prod.marginalize(v)
             # Replace old factors
             factors = [f for f in factors if f not in related] + [f_marg]
 
@@ -146,50 +151,3 @@ class LogJunctionTree(AbstractJointProbabilityClass):
         # 6) Exponentiate & return as Python float
         prob = np.exp(log_num - log_den)
         return prob.item()
-
-class LogFactor:
-    """
-    A factor in log-domain over discrete variables.
-    vars  : list of variable names (e.g. ['A','B'])
-    table : numpy array of shape (card(A), card(B), …) already in log-space
-    """
-    def __init__(self, vars, table, is_log=False):
-        self.vars = list(vars)
-        # arr = np.array(table, copy=False)
-        arr = np.array(table)
-        self.table = arr if is_log else np.log(arr)
-
-    def reduce(self, var, val):
-        """Condition on var=val, slicing out that dimension."""
-        if var not in self.vars:
-            return self
-        i = self.vars.index(var)
-        slicer = [slice(None)] * len(self.vars)
-        slicer[i] = val
-        new_tbl = self.table[tuple(slicer)]
-        new_vars = self.vars[:i] + self.vars[i+1:]
-        return LogFactor(new_vars, new_tbl, is_log=True)
-
-    def multiply(self, other, domains):
-        """
-        Multiply two log-factors → add their tables over a broadcast grid.
-        domains: dict var→cardinality
-        """
-        new_vars = sorted(set(self.vars + other.vars))
-        # prepare shapes for broadcasting
-        def reshape_for(f):
-            shape = [(domains[v] if v in f.vars else 1) for v in new_vars]
-            return f.table.reshape(shape)
-
-        A = reshape_for(self)
-        B = reshape_for(other)
-        return LogFactor(new_vars, A + B, is_log=True)
-
-    def marginalize(self, var, domains):
-        """Sum-out (log-sum-exp) variable var."""
-        if var not in self.vars:
-            return self
-        i = self.vars.index(var)
-        new_tbl = logsumexp(self.table, axis=i)
-        new_vars = self.vars[:i] + self.vars[i+1:]
-        return LogFactor(new_vars, new_tbl, is_log=True)

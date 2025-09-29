@@ -4,12 +4,12 @@
 import numpy as np
 
 # Local imports
-from core.binary_env import BinaryEnv
+from core.binary_frontier_environment import BinaryFrontierEnv
 from policies.abstract_policy_class import AbstractPolicyClass
 
 class RandomPolicy(AbstractPolicyClass):
-    def __init__(self, env: BinaryEnv, instance_hash: str, train: bool = True) -> None:
-        super().__init__(env, instance_hash, train)
+    def __init__(self, env: BinaryFrontierEnv, instance_hash: str) -> None:
+        super().__init__(env, instance_hash)
 
     @staticmethod
     def name() -> str:

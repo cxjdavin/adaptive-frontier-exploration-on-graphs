@@ -1,35 +1,35 @@
 # Standard library imports
+import timeit
 
 # Third-party imports
 import networkx as nx
 import numpy as np
 
 # Local imports
-from core.binary_env import BinaryEnv
+from core.binary_frontier_environment import BinaryFrontierEnv
 from core.linear_function import LinearFunction
 from core.piecewise_linear_function import PiecewiseLinearFunction
 from core.io_utils import load_pickle, save_pickle
 from policies.abstract_policy_class import AbstractPolicyClass
 
 class GittinsPolicy(AbstractPolicyClass):
-    def __init__(self, env: BinaryEnv, instance_hash: str, train: bool = True) -> None:
-        assert env.frontier_testing
-        self.trained_pickle_filename = f"results/trained_policy/gittins/{instance_hash}.pkl"
-        super().__init__(env, instance_hash, train)
-        self.node_to_parent, self.gittins_score = load_pickle(self.trained_pickle_filename)
+    def __init__(self, env: BinaryFrontierEnv, instance_hash: str) -> None:
+        super().__init__(env, instance_hash)
+        self.node_to_parent, self.gittins_score, self.train_time = load_pickle(self.trained_pickle_filename)
 
     @staticmethod
     def name() -> str:
         return "Gittins"
 
     def _setup_policy(self) -> None:
+        self.memo_Phi = dict()
         self.memo_phi = dict()
         self.gittins_score = dict()
 
         # Pre-process: root each tree in the forest
         self.rooted_forest = []
         self.node_to_forest_idx = dict()
-        self.node_to_parent = {v: None for v in range(self.n)}
+        self.node_to_parent = {v: -1 for v in range(self.n)}
         self.node_to_children = {v: [] for v in range(self.n)}
 
         env_cc_roots = set([f"X{idx}" for idx in self.env.cc_root])
@@ -57,25 +57,28 @@ class GittinsPolicy(AbstractPolicyClass):
             self.rooted_forest.append((root_node, rooted_tree))
 
     def _train_policy(self) -> None:
+        start_time = timeit.default_timer()
         for X in range(self.n):
-            if self.node_to_parent[X] is None:
+            if self.node_to_parent[X] == -1:
                 # Root node
-                self.gittins_score[tuple([X, None])] = self._compute_gittins_score(X, None)
+                self.gittins_score[tuple([X, -1])] = self._compute_gittins_score(X, -1)
             else:
                 # Non-root node
                 self.gittins_score[tuple([X, 0])] = self._compute_gittins_score(X, 0)
                 self.gittins_score[tuple([X, 1])] = self._compute_gittins_score(X, 1)
+        end_time = timeit.default_timer()
+        elapsed_time = end_time - start_time
 
         # Store trained policy information
-        save_pickle(tuple([self.node_to_parent, self.gittins_score]), self.trained_pickle_filename)
+        save_pickle(tuple([self.node_to_parent, self.gittins_score, elapsed_time]), self.trained_pickle_filename)
 
     def _select_action(self, status: np.ndarray, valid_actions: set[int]) -> int:
         # Gather Gittins scores
         score_node_list = []
         for node in valid_actions:
             parent_node = self.node_to_parent[node]
-            if parent_node is None:
-                key = tuple([node, None])
+            if parent_node == -1:
+                key = tuple([node, -1])
             else:
                 parent_bit = status[parent_node]
                 key = tuple([node, parent_bit])
@@ -91,17 +94,17 @@ class GittinsPolicy(AbstractPolicyClass):
 
     def _compute_gittins_score(self, X: int, b: int) -> float:
         assert 0 <= X and X <= self.n
-        assert b is None or b == 0 or b == 1
+        assert b == -1 or b == 0 or b == 1
         phi = self._build_phi(X, b)
         score = phi.compute_fixed_point()
         return score
 
-    def _build_phi(self, idx: int, b: int = None) -> PiecewiseLinearFunction:
+    def _build_phi(self, idx: int, b: int = -1) -> PiecewiseLinearFunction:
         key = tuple([idx, b])
         if key not in self.memo_phi.keys():
             query_dict = {f"X{idx}": 1}
             observation_dict = {}
-            if b is not None:
+            if b != -1:
                 parent_node = self.node_to_parent[idx]
                 observation_dict[f"X{parent_node}"] = b
 
@@ -115,7 +118,10 @@ class GittinsPolicy(AbstractPolicyClass):
             Phi1 = self._build_Phi(children, 1)
             RHS = Phi0.mult_by_const(beta).add_const(0).mult_by_const(p0) + Phi1.mult_by_const(beta).add_const(1).mult_by_const(p1)
             phi = RHS.max_with_linear()
+            phi.clean()
             self.memo_phi[key] = phi
+            self.memo_Phi[tuple([frozenset(children), 0])] = Phi0
+            self.memo_Phi[tuple([frozenset(children), 1])] = Phi1
 
             startpoint_val = RHS.value_functions[0](0)
             endpoint_val = 1/(1 - beta)

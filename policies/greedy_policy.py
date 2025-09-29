@@ -5,12 +5,12 @@ import networkx as nx
 import numpy as np
 
 # Local imports
-from core.binary_env import BinaryEnv
+from core.binary_frontier_environment import BinaryFrontierEnv
 from policies.abstract_policy_class import AbstractPolicyClass
 
 class GreedyPolicy(AbstractPolicyClass):
-    def __init__(self, env: BinaryEnv, instance_hash: str, train: bool = True) -> None:
-        super().__init__(env, instance_hash, train)
+    def __init__(self, env: BinaryFrontierEnv, instance_hash: str) -> None:
+        super().__init__(env, instance_hash)
 
     @staticmethod
     def name() -> str:
@@ -44,22 +44,8 @@ class GreedyPolicy(AbstractPolicyClass):
         self.last_tested = action
         return action
 
-# Direct, unoptimized implementation
-# class GreedyPolicy(AbstractPolicyClass):
-#     def __init__(self, env: BinaryEnv, instance_hash: str, train: bool = True) -> None:
-#         super().__init__(env, instance_hash, train)
-
-#     @staticmethod
-#     def name() -> str:
-#         return "Greedy"
-    
-#     def _setup_policy(self) -> None:
-#         pass
-    
-#     def _train_policy(self) -> None:
-#         pass
-
-#     def _select_action(self, status: np.ndarray, valid_actions: set[int]) -> int:
-#         marginal_prob1s = [(self.env.get_marginal_prob1(idx, status), idx) for idx in valid_actions]
-#         action = sorted(marginal_prob1s, reverse=True)[0][1]
-#         return action
+    # # Direct, unoptimized implementation
+    # def _select_action(self, status: np.ndarray, valid_actions: set[int]) -> int:
+    #     marginal_prob1s = [(self.env.get_marginal_prob1(idx, status), idx) for idx in valid_actions]
+    #     action = sorted(marginal_prob1s, reverse=True)[0][1]
+    #     return action
