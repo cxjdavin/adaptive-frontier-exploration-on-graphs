@@ -88,8 +88,6 @@ def run_experiment3(std_name: str, cc_threshold: int, inst_idx: int, experiment_
     
     print(f"Solving {std_name}, cc_threshold = {cc_threshold}, instance {inst_idx}")
     all_training_time, all_mean_vec, all_std_vec, all_disc_mean_vec, all_disc_std_vec, all_time_mean_vec, all_time_std_vec = run_experiment(all_inst_configs, policy_indices, multithread)
-    # for policy_idx in policy_indices:
-    #     print(policy_idx, all_mean_vec[policy_idx])
     
     # Save output so we can plot separately
     instance_stats = {

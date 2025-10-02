@@ -33,6 +33,20 @@ class ICPSR22140Processor:
         self.curated_dataset = self._extract_curated_dataset(tsv_file1, tsv_file2, tsv_file3, filter_sex_only)
         self.merged_datasets = self._merge_all_std_datasets_into_one()
 
+
+        # Print dataset statistics
+        for std in self.STD_to_dfkey.keys():
+            covariates, statuses, G, _, _, _ = self.merged_datasets[std]
+            n = G.number_of_nodes()
+            m = G.number_of_edges()
+            num_positive = sum([1 for u in G.nodes if statuses[u] == 1])
+            diam = max([
+                nx.diameter(G.subgraph(component))
+                for component in nx.connected_components(G)
+            ])
+            tw, _ = nx.algorithms.approximation.treewidth_min_fill_in(G)
+            print(f"Disease {std}: {num_positive}/{n} infected. {m} edges. diameter = {diam}. approx treewidth {tw}. covariate length: {len(covariates[0])}")
+
     """
     Generate covariates
     """
@@ -89,8 +103,6 @@ class ICPSR22140Processor:
             curated_dataset = {std: [] for std in self.STD_to_dfkey.keys()}
             for std, dfkey in self.STD_to_dfkey.items():
                 std_sex_filter = sex_filter[sex_filter[f"{dfkey}1"].isin({0,1}) & sex_filter[f"{dfkey}2"].isin({0,1})]
-                print(f"Number of individuals in {std}:", len(std_sex_filter))
-
                 graphs = {studynum: nx.Graph() for studynum in set(node_df["STUDYNUM"])}
                 digraphs = {studynum: nx.DiGraph() for studynum in set(node_df["STUDYNUM"])}
                 statuses = {studynum: dict() for studynum in set(node_df["STUDYNUM"])}
@@ -111,11 +123,6 @@ class ICPSR22140Processor:
                     DG = digraphs[studynum]
                     assert G.number_of_nodes() == DG.number_of_nodes()
                     if G.number_of_nodes() > 0:
-                        # Print some statistics
-                        num_positive = sum([1 for u in G.nodes if statuses[studynum][u] == 1])
-                        tw, _ = nx.algorithms.approximation.treewidth_min_fill_in(G)
-                        print(f"{std} study {studynum}: {num_positive}/{len(G.nodes)} infected. {G} has approx treewidth {tw}")
-
                         # Create new dataset and store into curated dataset
                         new_dataset = dict()
                         individual_mapping = dict()
