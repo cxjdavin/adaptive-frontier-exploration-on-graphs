@@ -105,9 +105,9 @@ def plot_row(policies_to_run: dict, policy_labels: list, policy_colors: list, po
 
     all_lines = []
     key_to_axes = {
-        (10, 0.5): 0,
-        (10, 0.7): 1,
-        (10, 0.9): 2,
+        (10, 0.9): 0,
+        (50, 0.9): 1,
+        (100, 0.9): 2,
     }
 
     # Plot
